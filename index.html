@@ -231,6 +231,10 @@ input[type=range]{width:100%;accent-color:var(--accent);height:30px}
 /* track map */
 .mapwrap{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r);padding:8px;position:relative}
 .mapwrap svg{width:100%;height:auto;display:block;touch-action:manipulation}
+.jline{border-left:2px solid var(--card2);margin-left:6px;padding-left:14px;display:flex;flex-direction:column;gap:9px}
+.jrow{display:flex;gap:9px;align-items:baseline;position:relative}
+.jdot{position:absolute;left:-21px;top:2px;width:11px;height:11px;border-radius:50%;border:2px solid var(--bg)}
+.jdot.jnote{background:var(--card-sub);width:8px;height:8px;left:-19.5px;top:3px}
 .mapzoom{position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:6px}
 .mapzoom .iconbtn{width:32px;height:32px;font-size:1.1rem;border-radius:9px}
 .mapwrap svg{cursor:grab;touch-action:none}
@@ -841,9 +845,9 @@ async function buildSampleState(){
       corners:{
         "5":{status:"strong",name:"Ruskenhoek",gear:"3",speed:"140",notes:"Late apex, use full kerb on exit.",confidence:8},
         "6":{status:"strong",name:"Stroet",gear:"3",notes:"Flows straight from Ruskenhoek — one movement.",confidence:8},
-        "8":{status:"attention",name:"Stekkenwal",gear:"2",braking:"Brake at 100 board (currently ~120)",notes:"Chronic early braking here. Time on the table.",confidence:5},
-        "10":{status:"improving",name:"De Bult",gear:"3",notes:"Wider entry fixed 2024 problem; keep checking.",confidence:7},
-        "15":{status:"inconsistent",name:"Ramshoek",gear:"4",speed:"165",notes:"Exit throttle cautious. Earlier gas, trust the tyre.",confidence:6},
+        "8":{status:"attention",name:"Stekkenwal",gear:"2",braking:"Brake at 100 board (currently ~120)",notes:"Chronic early braking here. Time on the table.",confidence:5,history:[{d:"2024-05-21",s:"inconsistent"},{d:"2025-04-29",s:"attention"}]},
+        "10":{status:"improving",name:"De Bult",gear:"3",notes:"Wider entry fixed 2024 problem; keep checking.",confidence:7,history:[{d:"2024-05-21",s:"attention"},{d:"2025-04-29",s:"improving"}]},
+        "15":{status:"inconsistent",name:"Ramshoek",gear:"4",speed:"165",notes:"Exit throttle cautious. Earlier gas, trust the tyre.",confidence:6,history:[{d:"2024-05-21",s:"attention"},{d:"2025-04-29",s:"attention"},{d:"2026-06-16",s:"inconsistent"}]},
         "17":{status:"strong",name:"GT chicane",gear:"2",notes:"Attack the first kerb, let the bank catch you.",confidence:8}
       },
       permNotes:"Rhythm circuit — string sector 3 together and the lap comes. Wind direction matters on the back straight."
@@ -2326,8 +2330,9 @@ Actions.tapCorner=el=>{
     <div class="field"><label>Notes</label><textarea id="co_notes">${esc(ca.notes||"")}</textarea></div>
     <div class="field"><label>Today's observation (track-day note)</label>
       <input type="text" id="co_daynote" placeholder="e.g. kerb paint slippery when damp">
+
       <div class="small muted" style="margin-top:4px">Saved to today's date — promote it to the permanent notes if it holds up.</div></div>
-    ${cornerDayNotesHTML(circuitId,layoutId,bikeId,num)}
+    ${journeyHTML(circuitId,layoutId,bikeId,num)}
     <button class="btn" data-action="saveCorner" data-corner="${num}">Save corner</button>`);
 };
 Actions.cornerConf=el=>{$("#co_confval").textContent=el.value;};
@@ -2356,11 +2361,60 @@ Actions.promoteNote=el=>{
   delete src.corners[num].dayNote;
   save();toast("Promoted to permanent notes");Actions.tapCorner({dataset:{corner:num}});
 };
+
+/* ============================================================
+   CORNER JOURNEY — how a corner evolved across visits
+============================================================ */
+function cornerJourney(circuitId,layoutId,bikeId,num){
+  const ev=[];
+  const ca=(S.annotations[annoKey(circuitId,layoutId,bikeId)]||{corners:{}}).corners[num];
+  if(ca&&ca.history)for(const h of ca.history)ev.push({d:h.d,type:"status",s:h.s});
+  const prefix=`${circuitId}/${layoutId}/${bikeId}/day/`;
+  for(const k of Object.keys(S.annotations)){
+    if(!k.startsWith(prefix))continue;
+    const dn=S.annotations[k].corners&&S.annotations[k].corners[num]&&S.annotations[k].corners[num].dayNote;
+    if(dn)ev.push({d:k.slice(prefix.length),type:"note",text:dn});
+  }
+  ev.sort((a,b)=>a.d.localeCompare(b.d)||(a.type==="status"?-1:1));
+  return ev;
+}
+function journeyHTML(circuitId,layoutId,bikeId,num){
+  const ev=[];
+  const ca=(S.annotations[annoKey(circuitId,layoutId,bikeId)]||{corners:{}}).corners[num];
+  if(ca&&ca.history)for(const h of ca.history)ev.push({d:h.d,type:"status",s:h.s});
+  const prefix=`${circuitId}/${layoutId}/${bikeId}/day/`;
+  for(const k of Object.keys(S.annotations)){
+    if(!k.startsWith(prefix))continue;
+    const dn=S.annotations[k].corners&&S.annotations[k].corners[num]&&S.annotations[k].corners[num].dayNote;
+    if(dn)ev.push({d:k.slice(prefix.length),type:"note",text:dn,key:k});
+  }
+  if(!ev.length)return"";
+  ev.sort((a,b)=>a.d.localeCompare(b.d)||(a.type==="status"?-1:1));
+  const row=e=>{
+    if(e.type==="status"){
+      const m=STATUS_META[e.s]||STATUS_META.none;
+      return`<div class="jrow"><span class="jdot" style="background:${m.hex}"></span>
+        <div><b class="small" style="color:${m.hex}">${esc(m.label)}</b><span class="small muted"> · ${fmtDate(e.d)}</span></div></div>`;
+    }
+    return`<div class="jrow"><span class="jdot jnote"></span>
+      <div style="flex:1"><span class="small">${esc(e.text)}</span><span class="small muted"> · ${fmtDateShort(e.d)}</span>
+      <button class="linkish" style="padding:0 0 0 6px" data-action="promoteNote" data-key="${esc(e.key)}" data-corner="${num}">↑ Promote</button></div></div>`;
+  };
+  return`<div class="field" style="margin-top:14px"><label>Corner journey</label>
+    <div class="jline">${ev.map(row).join("")}</div>
+    <div class="small muted" style="margin-top:6px">Every status change and track-day observation for this corner, oldest first.</div></div>`;
+}
 Actions.saveCorner=el=>{
   const num=el.dataset.corner;
   const anno=getAnno(annoKey(mapCtx.circuitId,mapCtx.layoutId,mapCtx.bikeId));
   const ca=anno.corners[num]||(anno.corners[num]={});
-  ca.status=pickedChip("cst")||ca.status||"none";
+  const newSt=pickedChip("cst")||ca.status||"none";
+  if(newSt!==ca.status&&newSt!=="none"){
+    ca.history=ca.history||[];
+    const last=ca.history[ca.history.length-1];
+    if(!last||last.s!==newSt)ca.history.push({d:todayISO(),s:newSt});
+  }
+  ca.status=newSt;
   for(const k of["name","gear","speed","braking","turnin","apex","exit","throttle","body","refs","instruction"]){
     const inp=$("#co_"+k);if(inp)ca[k]=inp.value.trim();
   }
