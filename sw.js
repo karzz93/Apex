@@ -1,5 +1,5 @@
 /* Apexbook service worker — bump VERSION when you upload a new build */
-const VERSION = "apexbook-v1.0.2";
+const VERSION = "apexbook-v1.1.0";
 const ASSETS = [
   "./",
   "./index.html",
