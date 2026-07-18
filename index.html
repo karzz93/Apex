@@ -2841,6 +2841,33 @@ Actions.confirmImportGeo=()=>{
   save();closeModal();render();toast("Layout map imported — use adjust to fine-tune S/F and T1");
 };
 
+
+/* ============================================================
+   ANDROID / BROWSER BACK BUTTON
+   One sentinel history entry; system back = in-app back:
+   modal -> close, detail -> list, tab -> home, home -> exit.
+   Modals never touch history, so chained modals can't race.
+============================================================ */
+function handleAppBack(){
+  if($("#modals").firstChild){closeModal();return true;}
+  if(route.dayId||route.circuitId||route.bikeId){go(route.tab);return true;}
+  if(route.tab!=="home"){go("home");return true;}
+  return false; // nothing left — allow the app to exit
+}
+(function backTrap(){
+  try{
+    history.replaceState({apex:"root"},"");
+    history.pushState({apex:"app"},"");
+  }catch(e){return;} // history API unavailable (some file:// contexts)
+  window.addEventListener("popstate",()=>{
+    if(handleAppBack()){
+      try{history.pushState({apex:"app"},"");}catch(e){}
+    }else{
+      try{history.back();}catch(e){}
+    }
+  });
+})();
+
 /* ============================================================
    SETTINGS, EXPORT & BACKUP
 ============================================================ */
