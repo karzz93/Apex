@@ -961,6 +961,27 @@ function annoKey(circuitId,layoutId,bikeId,dayId){
 }
 function getAnno(key){return S.annotations[key]||(S.annotations[key]={corners:{},permNotes:""});}
 
+
+/* auto-refresh forecast for upcoming planned days shown on Home */
+const __planWx={inflight:{}};
+function planForecastPending(p){return !!__planWx.inflight[p.id];}
+function autoPlanForecast(){
+  if(!navigator.onLine)return;
+  const today=todayISO();
+  for(const p of S.plans){
+    if(!p.date||p.date<today)continue;
+    const days=(new Date(p.date)-new Date(today))/864e5;
+    if(days>15)continue; // beyond forecast range
+    const fresh=p.weather&&p.weather.fetchedAt&&(Date.now()-Date.parse(p.weather.fetchedAt)<6*3600e3);
+    if(fresh||__planWx.inflight[p.id])continue;
+    __planWx.inflight[p.id]=true;
+    const c=circuitById(p.circuitId);
+    WeatherService.getForDay(c,p.date).then(w=>{
+      // keep the estimate off the home card — only show real forecasts unprompted
+      if(!String(w.source).startsWith("estimate")){p.weather=w;save();}
+    }).catch(()=>{}).finally(()=>{delete __planWx.inflight[p.id];render();});
+  }
+}
 function backupOverdue(){
   if(S.trackdays.length<2)return false;
   if(!S.lastBackupAt)return true;
@@ -1037,7 +1058,7 @@ function render(){
   updateSyncChip();
   hydratePhotos();
   drawPendingCharts();
-  drawPendingMaps();
+  drawPendingMaps();  if(route.tab==="home")autoPlanForecast();
 }
 function go(tab,params={}){route=Object.assign({tab},params);S.lastTab=tab;save();window.scrollTo(0,0);render();}
 
@@ -1221,6 +1242,11 @@ function viewHome(){
     <div class="row between"><span class="eyebrow acc">Next planned</span><span class="small muted">${fmtDate(plan.date)}</span></div>
     <div style="font-weight:850;font-size:1.08rem;margin-top:4px">${esc(c?c.name:"?")}</div>
     <div class="small muted">${esc(plan.organiser||"")} · ${esc(bikeById(plan.bikeId)?.model||"")}</div>
+    ${plan.weather?`<div class="row" style="gap:8px;margin-top:8px;align-items:center">
+      <span style="font-size:1.5rem;line-height:1">${weatherIcon(plan.weather)}</span>
+      <div><b class="small">${plan.weather.temp}°C · ${esc(plan.weather.summary)}</b>
+      <div class="small muted">${plan.weather.windKmh} km/h ${esc(plan.weather.windDir)}${plan.weather.rainMm>0?` · ${plan.weather.rainMm} mm rain`:""} · ${esc(plan.weather.source.includes("forecast")?"forecast":plan.weather.source)}</div></div>
+    </div>`:planForecastPending(plan)?`<div class="small muted" style="margin-top:8px">◌ Fetching forecast…</div>`:""}
     ${plan.goals&&plan.goals.length?`<div class="chips" style="margin-top:8px">${plan.goals.map(g=>`<span class="chip mini">${esc(g)}</span>`).join("")}</div>`:""}
   </div>`;})():`
   <div class="card tap" data-action="newPlan"><div class="eyebrow acc">Next planned</div>
@@ -3415,6 +3441,7 @@ Actions.addChecklist=()=>{S.checklists.push({id:uid(),name:"New checklist",items
   try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}
   route.tab=["home","diary","tracks","garage","progress"].includes(S.lastTab)?S.lastTab:"home";
   render();
+  autoPlanForecast();
 })();
 
 /* ---- PWA: service worker + install ---- */
