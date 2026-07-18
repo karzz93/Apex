@@ -2356,7 +2356,8 @@ function viewBikeDetail(id){
   <div class="field" style="margin-top:10px"><label>Status</label>
     <div class="chips">${["active","sold","archived"].map(st=>`<button class="chip ${(b.status||"active")===st?"on":""}" data-action="bikeStatus" data-id="${b.id}" data-v="${st}">${st[0].toUpperCase()+st.slice(1)}</button>`).join("")}</div>
     <div class="small muted" style="margin-top:5px">Past track days always stay linked to this bike.</div>
-  </div>`;
+  </div>
+  <button class="btn danger slim" style="margin-top:12px" data-action="delBike" data-id="${b.id}">Delete motorcycle…</button>`;
 }
 Actions.bikeStatus=el=>{bikeById(el.dataset.id).status=el.dataset.v;save();render();};
 Actions.bikePhoto=el=>{
@@ -2365,6 +2366,34 @@ Actions.bikePhoto=el=>{
 };
 Actions.addBike=()=>bikeFormModal(null);
 Actions.editBike=el=>bikeFormModal(bikeById(el.dataset.id));
+Actions.delBike=el=>{
+  const b=bikeById(el.dataset.id);if(!b)return;
+  const tds=S.trackdays.filter(d=>d.bikeId===b.id).length;
+  const plans=S.plans.filter(p=>p.bikeId===b.id).length;
+  const annoKeys=Object.keys(S.annotations).filter(k=>k.split("/")[2]===b.id);
+  openModal(`<h2>Delete ${esc(b.brand)} ${esc(b.model)}?</h2>
+    <div class="card dark flat">
+      <div class="small" style="line-height:1.55">
+      ${tds?`• <b>${tds} track day${tds>1?"s":""}</b> stay in your diary — they'll just no longer show a bike name.<br>`:""}
+      ${plans?`• ${plans} planned day${plans>1?"s":""} will lose the bike link.<br>`:""}
+      ${annoKeys.length?`• <b>Corner notes for this bike</b> at ${annoKeys.length} layout${annoKeys.length>1?"s":""} will be deleted permanently.<br>`:""}
+      • Setup presets and maintenance items are not affected.
+      </div>
+    </div>
+    <p class="small muted">Not riding it anymore but want to keep the corner notes? Mark it <b>Sold</b> or <b>Archived</b> instead — that keeps everything.</p>
+    <div class="btnrow">
+      <button class="btn sec" data-action="closeModal">Cancel</button>
+      <button class="btn danger" data-action="reallyDelBike" data-id="${b.id}">Delete bike</button>
+    </div>`);
+};
+Actions.reallyDelBike=el=>{
+  const id=el.dataset.id;
+  S.bikes=S.bikes.filter(b=>b.id!==id);
+  S.plans.forEach(p=>{if(p.bikeId===id)delete p.bikeId;});
+  for(const k of Object.keys(S.annotations))if(k.split("/")[2]===id)delete S.annotations[k];
+  save();closeModal();go("garage");toast("Motorcycle deleted");
+};
+
 function bikeFormModal(b){
   openModal(`<h2>${b?"Edit":"Add"} motorcycle</h2>
     ${BIKE_FIELDS.map(([k,lb])=>`<div class="field"><label>${lb}</label>
@@ -3051,7 +3080,6 @@ Actions.addChecklist=()=>{S.checklists.push({id:uid(),name:"New checklist",items
 if("serviceWorker" in navigator && (location.protocol==="https:"||location.hostname==="localhost"||location.hostname==="127.0.0.1")){
   window.addEventListener("load",()=>{
     navigator.serviceWorker.register("sw.js").catch(()=>{});
-    // reload once when a new version takes over, so updates apply cleanly
     let refreshed=false;
     navigator.serviceWorker.addEventListener("controllerchange",()=>{
       if(refreshed)return;refreshed=true;location.reload();
