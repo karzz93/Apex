@@ -711,7 +711,7 @@ const GOAL_SUGGESTIONS=["Improve consistency","Improve a specific corner","Reduc
 const MAINT_ITEMS=["Engine oil","Brake pads","Brake fluid","Tyres","Chain","Sprockets","Coolant","Suspension service","Air filter","Spark plugs","General inspection"];
 const POSTDAY_CHECK=["Inspect tyres","Check tyre pressures","Check brake pads","Check fluid levels","Clean and lubricate chain","Inspect fasteners","Inspect fairings","Record damage or wear"];
 const PACK_DEFAULT=["Helmet","Leathers","Gloves","Boots","Back protector","Earplugs","Fuel can","Tyre warmers","Extension cables","Paddock stands","Pressure gauge","Tools","Spare levers","Food","Water","Licence & documents","Camera","Chargers"];
-const PHOTO_CATS=["Bike","Action","Tyre wear","Setup","Timing screen","Paddock","Incident","Other"];
+const PHOTO_CATS=["Arrival","Paddock","Bike","Action","Tyre wear","Setup","Timing screen","Incident","Other"];
 const COST_CATS=[["ticket","Track-day ticket"],["fuel","Fuel"],["travel","Travel"],["accommodation","Accommodation"],["tyres","Tyres"],["maintenance","Maintenance"],["food","Food"],["coaching","Coaching"],["photography","Photography"],["other","Other"]];
 
 /* sample placeholder photos as SVG data-urls */
@@ -970,7 +970,7 @@ function getAnno(key){return S.annotations[key]||(S.annotations[key]={corners:{}
 
 
 /* auto-refresh forecast for upcoming planned days shown on Home */
-const __planWx={inflight:{}};
+const __planWx={inflight:{},lastTry:{}};
 function planForecastPending(p){return !!__planWx.inflight[p.id];}
 function autoPlanForecast(){
   if(!navigator.onLine)return;
@@ -980,13 +980,14 @@ function autoPlanForecast(){
     const days=(new Date(p.date)-new Date(today))/864e5;
     if(days>15)continue; // beyond forecast range
     const fresh=p.weather&&p.weather.fetchedAt&&(Date.now()-Date.parse(p.weather.fetchedAt)<6*3600e3);
-    if(fresh||__planWx.inflight[p.id])continue;
-    __planWx.inflight[p.id]=true;
+    const cooling=__planWx.lastTry[p.id]&&(Date.now()-__planWx.lastTry[p.id]<10*60e3); // failed recently: back off 10 min
+    if(fresh||cooling||__planWx.inflight[p.id])continue;
+    __planWx.inflight[p.id]=true;__planWx.lastTry[p.id]=Date.now();
     const c=circuitById(p.circuitId);
     WeatherService.getForDay(c,p.date).then(w=>{
       // keep the estimate off the home card — only show real forecasts unprompted
-      if(!String(w.source).startsWith("estimate")){p.weather=w;save();}
-    }).catch(()=>{}).finally(()=>{delete __planWx.inflight[p.id];render();});
+      if(!String(w.source).startsWith("estimate")){p.weather=w;save();render();}
+    }).catch(()=>{}).finally(()=>{delete __planWx.inflight[p.id];});
   }
 }
 
@@ -1304,9 +1305,11 @@ function viewHome(){
   <button class="btn" data-action="quickSession" data-id="${active.id}">＋ Add session to active day</button>`
   :`<button class="btn" data-action="newDay">🏁 Start a new track day</button>`}
 
+  ${(()=>{window.__planSoon=false;return"";})()}
   ${plan?(()=>{const c=circuitById(plan.circuitId);return`
-  <div class="card tap" data-action="openPlan" data-id="${plan.id}">
-    <div class="row between"><span class="eyebrow acc">Next planned</span><span class="small muted">${fmtDate(plan.date)}</span></div>
+  ${(()=>{const dd=(new Date(plan.date)-new Date(todayISO()))/864e5;window.__planSoon=dd>=0&&dd<=1;return"";})()}
+  <div class="card tap" data-action="openPlan" data-id="${plan.id}" style="${window.__planSoon?"border-left:3px solid var(--accent)":""}">
+    <div class="row between"><span class="eyebrow acc">${window.__planSoon?((new Date(plan.date)-new Date(todayISO()))/864e5<1?"Track day · today":"Track day · tomorrow"):"Next planned"}</span><span class="small muted">${fmtDate(plan.date)}</span></div>
     <div style="font-weight:850;font-size:1.08rem;margin-top:4px">${esc(c?c.name:"?")}</div>
     <div class="small muted">${esc(plan.organiser||"")} · ${esc(bikeById(plan.bikeId)?.model||"")}</div>
     ${plan.weather?`<div class="row" style="gap:8px;margin-top:8px;align-items:center">
@@ -1315,9 +1318,12 @@ function viewHome(){
       <div class="small muted">${plan.weather.windKmh} km/h ${esc(plan.weather.windDir)}${plan.weather.rainMm>0?` · ${plan.weather.rainMm} mm rain`:""} · ${esc(plan.weather.source.includes("forecast")?"forecast":plan.weather.source)}</div></div>
     </div>`:planForecastPending(plan)?`<div class="small muted" style="margin-top:8px">◌ Fetching forecast…</div>`:""}
     ${plan.goals&&plan.goals.length?`<div class="chips" style="margin-top:8px">${plan.goals.map(g=>`<span class="chip mini">${esc(g)}</span>`).join("")}</div>`:""}
+    ${plan.photos&&plan.photos.length?`<div class="gallery" style="margin-top:9px">${plan.photos.slice(-4).map((ph,i)=>`<span data-action="viewPlanPhoto" data-plan="${plan.id}" data-i="${plan.photos.length-Math.min(4,plan.photos.length)+i}">${photoImg(ph.id,"","")}</span>`).join("")}</div>`:""}
+    ${window.__planSoon?`<button class="btn ${plan.photos&&plan.photos.length?"sec ":""}slim" style="margin-top:10px" data-action="addPlanPhoto" data-id="${plan.id}">📷 ${plan.photos&&plan.photos.length?"Add another moment":"Capture the moment — arrival, paddock, the calm before"}</button>`:""}
   </div>`;})():`
   <div class="card tap" data-action="newPlan"><div class="eyebrow acc">Next planned</div>
   <div class="muted small" style="margin-top:6px">Nothing planned. Tap to plan your next track day →</div></div>`}
+  ${window.__planSoon||active?"":`<button class="btn sec slim" data-action="quickCapture">📷 Capture a moment — it finds its track day</button>`}
 
   ${recent&&!active?`
   <div class="card tap" data-action="openDay" data-id="${recent.id}">
@@ -1378,7 +1384,7 @@ function viewDiary(){
   if(plans.length){
     html+=`<div class="eyebrow" style="margin:14px 0 2px">Planned</div>`;
     for(const p of plans){const c=circuitById(p.circuitId);
-      html+=`<div class="card dark flat tap" data-action="openPlan" data-id="${p.id}">
+      html+=`<div class="card dark flat tap" data-action="openPlan" data-id="${p.id}">${p.photos&&p.photos.length?`<span class="tag grey" style="float:right">📷 ${p.photos.length}</span>`:""}
         <div class="row between"><b>${esc(c?c.name:"?")}</b><span class="small muted">${fmtDate(p.date)}</span></div>
         <div class="small muted">${esc(p.organiser||"Planned track day")}</div></div>`;}
   }
@@ -1818,6 +1824,11 @@ Actions.openPlan=el=>{
     ${p.setupPlan?`<div class="notice"><b>Setup plan:</b> ${esc(p.setupPlan)}</div>`:""}
     ${p.accommodation?`<div class="small" style="margin:6px 0">🛏 ${esc(p.accommodation)}</div>`:""}
     ${p.notes?`<div class="small muted" style="margin:6px 0">${esc(p.notes)}</div>`:""}
+    ${(p.photos&&p.photos.length)?`
+    <div class="cardhead" style="margin-top:10px"><h3 style="font-size:1rem;font-weight:850">Photos</h3>
+      <button class="linkish" data-action="addPlanPhoto" data-id="${p.id}">＋ Add</button></div>
+    <div class="gallery">${p.photos.map((ph,i)=>`<span data-action="viewPlanPhoto" data-plan="${p.id}" data-i="${i}">${photoImg(ph.id,"","")}</span>`).join("")}</div>`
+    :`<button class="btn sec slim" style="margin-top:10px" data-action="addPlanPhoto" data-id="${p.id}">📷 Add photos — arrival, paddock, the night before</button>`}
     ${p.weather?`<div class="card dark flat"><div class="row between"><span class="small">${weatherIcon(p.weather)} ${esc(p.weather.summary)} · ${p.weather.temp}°C · ${p.weather.windKmh} km/h ${esc(p.weather.windDir)}</span><span class="small muted">${esc(p.weather.source)}</span></div></div>`:""}
     <button class="btn sec slim" data-action="fetchPlanWeather" data-id="${p.id}">${p.weather?"↻ Refresh forecast":"☀ Get forecast"}</button>
     ${memoryCardHTML(p.circuitId,p.layoutId,p.bikeId)}
@@ -1837,10 +1848,34 @@ Actions.planCheck=el=>{
   el.closest(".checkline").classList.toggle("done",el.checked);save();
 };
 Actions.delPlan=el=>{S.plans=S.plans.filter(x=>x.id!==el.dataset.id);save();closeModal();render();};
+Actions.addPlanPhoto=el=>{
+  const p=S.plans.find(x=>x.id===el.dataset.id);
+  const home=route.tab==="home";
+  pickPhoto(id=>photoMetaModal((cap,cat)=>{
+    p.photos=p.photos||[];p.photos.push({id,cap,cat});save();closeModal();
+    if(home){render();toast("Saved — it'll carry into the track day");}
+    else Actions.openPlan({dataset:{id:p.id}});
+  },{preset:"Arrival"}));
+};
+Actions.viewPlanPhoto=el=>{
+  const p=S.plans.find(x=>x.id===el.dataset.plan);
+  const i=+el.dataset.i;const ph=p.photos[i];
+  openModal(`${photoImg(ph.id,"ph big")}
+    <div class="row between" style="margin-top:10px">
+      <div><b>${esc(ph.cap||"Photo")}</b><div class="small muted">${esc(ph.cat||"")} · planned ${fmtDate(p.date)}</div></div>
+      <button class="linkish" data-action="delPlanPhoto" data-plan="${p.id}" data-i="${i}">Remove</button>
+    </div>`);
+};
+Actions.delPlanPhoto=async el=>{
+  const p=S.plans.find(x=>x.id===el.dataset.plan);
+  const ph=p.photos.splice(+el.dataset.i,1)[0];
+  if(ph)await DB.delPhoto(ph.id).catch(()=>{});
+  save();closeModal();Actions.openPlan({dataset:{id:p.id}});
+};
 Actions.planToDay=el=>{
   const p=S.plans.find(x=>x.id===el.dataset.id);
   const day={id:uid(),circuitId:p.circuitId,layoutId:p.layoutId,bikeId:p.bikeId,date:p.date,organiser:p.organiser,
-    condition:"Dry",sessions:[],setup:{},goals:(p.goals||[]).map(t=>({text:t,status:""})),photos:[],costs:{},incidents:[],checkDone:[],
+    condition:"Dry",sessions:[],setup:{},goals:(p.goals||[]).map(t=>({text:t,status:""})),photos:(p.photos||[]).slice(),costs:{},incidents:[],checkDone:[],
     notes:p.notes||"",lessons:"",nextPriorities:"",active:true};
   const prev=daysFor(day.circuitId,day.layoutId,day.bikeId).sort((a,b)=>b.date.localeCompare(a.date))[0];
   if(prev&&prev.setup)day.setup=Object.assign({},prev.setup);
@@ -2138,12 +2173,60 @@ function pickPhoto(cb){
   };
   inp.click();
 }
-function photoMetaModal(cb){
+function photoMetaModal(cb,{preset}={}){
+  const pre=preset&&PHOTO_CATS.includes(preset)?preset:PHOTO_CATS[0];
   openModal(`<h2>Photo details</h2>
-    <div class="field"><label>Caption</label><input type="text" id="f_cap"></div>
-    <div class="field"><label>Category</label><div class="chips">${PHOTO_CATS.map((c,i)=>`<button class="chip ${i===0?"on":""}" data-action="chipPick" data-group="phcat" data-v="${c}">${c}</button>`).join("")}</div></div>
+    <div class="field"><label>Caption</label><input type="text" id="f_cap" placeholder="e.g. paddock set up, sunset over T3"></div>
+    <div class="field"><label>Category</label><div class="chips">${PHOTO_CATS.map(c=>`<button class="chip ${c===pre?"on":""}" data-action="chipPick" data-group="phcat" data-v="${c}">${c}</button>`).join("")}</div></div>
     <button class="btn" id="phSaveBtn">Add photo</button>`,
-    m=>{$("#phSaveBtn",m).onclick=()=>{cb($("#f_cap").value.trim(),pickedChip("phcat")||"Other");};});
+    m=>{$("#phSaveBtn",m).onclick=()=>{cb($("#f_cap").value.trim(),pickedChip("phcat")||pre);};});
+}
+
+/* ============================================================
+   QUICK CAPTURE — one tap from Home to a diary photo
+   Finds the right home for the photo: active day > upcoming
+   plan > a quick plan you create on the spot. The evening
+   before is part of the track day.
+============================================================ */
+function captureTarget(){
+  const act=S.trackdays.find(d=>d.active);
+  if(act)return{kind:"day",obj:act};
+  const today=todayISO();
+  const plan=S.plans.filter(p=>p.date&&Math.abs((new Date(p.date)-new Date(today))/864e5)<=7)
+    .sort((a,b)=>a.date.localeCompare(b.date))[0];
+  if(plan)return{kind:"plan",obj:plan};
+  return null;
+}
+Actions.quickCapture=()=>{
+  const t=captureTarget();
+  if(!t){
+    // nothing to attach to yet — make a quick plan on the spot
+    const tomorrow=new Date(Date.now()+864e5).toISOString().slice(0,10);
+    openModal(`<h2>Where are you?</h2>
+      <p class="small muted">No upcoming day in the diary yet — say where and when, and this photo starts it.</p>
+      <div class="field"><label>Circuit</label>
+        <select id="qc_circuit">${allCircuits().map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></div>
+      <div class="field"><label>Riding on</label><input type="date" id="qc_date" value="${tomorrow}"></div>
+      <button class="btn" data-action="quickCaptureGo">📷 Take the photo</button>`);
+    return;
+  }
+  doCapture(t);
+};
+Actions.quickCaptureGo=()=>{
+  const c=circuitById($("#qc_circuit").value);
+  const plan={id:uid(),circuitId:c.id,layoutId:c.layouts[0].id,bikeId:(S.bikes[0]||{}).id,
+    date:$("#qc_date").value||todayISO(),organiser:"",goals:[],photos:[],checkDone:[]};
+  S.plans.push(plan);save();closeModal();
+  doCapture({kind:"plan",obj:plan});
+};
+function doCapture(t){
+  const isEve=t.kind==="plan";
+  pickPhoto(id=>photoMetaModal((cap,cat)=>{
+    t.obj.photos=t.obj.photos||[];
+    t.obj.photos.push({id,cap,cat});
+    save();closeModal();render();
+    toast(isEve?"Saved to "+ (circuitById(t.obj.circuitId)?.name||"your plan") +" — it'll carry into the track day":"Added to today's diary");
+  },{preset:isEve?"Arrival":"Paddock"}));
 }
 Actions.addDayPhoto=el=>{
   const d=S.trackdays.find(x=>x.id===el.dataset.id);
