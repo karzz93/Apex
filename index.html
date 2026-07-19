@@ -795,7 +795,7 @@ async function buildSampleState(){
       lessons:"Wet pace comes from relaxed arms, not bravery.",
       nextPriorities:"Hugenholtz entry line; try softer rear rebound for the banking.",
       photos:[{id:phIds.zand,cap:"Scheivlak",cat:"Action"}],
-      costs:{ticket:279,fuel:60,travel:25,tyres:0,food:22},incidents:[{type:"Near miss",text:"Rider crashed ahead at Tarzan in S1; took to the run-off, no contact."}],checkDone:[] },
+      costs:{ticket:279,fuel:60,travel:25,tyres:0,food:22},incidents:[{type:"Near miss",text:"Rider crashed ahead at Tarzan in S1; took to the run-off, no contact.",corner:1,date:"2024-08-13"}],checkDone:[] },
     { id:"td3",circuitId:"assen",layoutId:"gp",date:"2025-04-29",bikeId:"bike_r6",organiser:"Motoplace",
       condition:"Dry",weather:{temp:13.8,feels:12.2,rainMm:0,windKmh:18,windDir:"NE",humidity:58,cloud:30,summary:"Sunny",source:"mock"},
       sessions:[
@@ -854,6 +854,9 @@ async function buildSampleState(){
     },
     "zandvoort/gp/bike_r6":{
       corners:{
+        "1":{status:"inconsistent",name:"Tarzan",gear:"2",notes:"Committed braking normally fine. Since the 2024 near-miss I release early.",confidence:5,
+          history:[{d:"2024-05-02",s:"strong"},{d:"2024-08-13",s:"attention"},{d:"2025-06-20",s:"inconsistent"}],
+          confHistory:[{d:"2024-05-02",v:7},{d:"2024-08-13",v:4},{d:"2025-06-20",v:5}]},
         "3":{status:"attention",name:"Hugenholtz",gear:"2",notes:"Enter wider, banking does the work. Still missing apex.",confidence:5},
         "8":{status:"strong",name:"Scheivlak",gear:"4",speed:"150",notes:"Commit blind over the crest, aim at the marshal post.",confidence:7},
         "11":{status:"improving",name:"Arie Luyendijkbocht",gear:"3",notes:"Banking: lean less, throttle earlier.",confidence:6}
@@ -985,6 +988,66 @@ function autoPlanForecast(){
       if(!String(w.source).startsWith("estimate")){p.weather=w;save();}
     }).catch(()=>{}).finally(()=>{delete __planWx.inflight[p.id];render();});
   }
+}
+
+/* ============================================================
+   RIDER PATTERNS — the human across all your days
+   Correlations in your own data. Patterns, not diagnoses.
+============================================================ */
+function riderPatterns(){
+  const sess=[];
+  for(const d of S.trackdays){
+    const st=dayStats(d);
+    (d.sessions||[]).forEach((s,i)=>{
+      const ss=lapStats(s.laps);
+      if(ss.n<3)return;
+      sess.push({dayId:d.id,date:d.date,idx:i+1,start:s.start,cond:s.condition,
+        cons:ss.consistency,best:ss.best,dayBest:st.best,
+        conf:s.ratings&&s.ratings.confidence,fat:s.ratings&&s.ratings.physFatigue});
+    });
+  }
+  const days=new Set(sess.map(s=>s.dayId)).size;
+  const out=[];
+  const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
+  if(days>=3){
+    // 1. time of day
+    const hr=s=>s.start?+s.start.split(":")[0]:null;
+    const am=sess.filter(s=>hr(s)!=null&&hr(s)<13&&s.cons!=null).map(s=>s.cons);
+    const pm=sess.filter(s=>hr(s)!=null&&hr(s)>=14&&s.cons!=null).map(s=>s.cons);
+    if(am.length>=4&&pm.length>=4){
+      const dlt=Math.round(avg(am)-avg(pm));
+      if(Math.abs(dlt)>=4)out.push({icon:"🕐",t:`Your consistency after 14:00 runs ${Math.abs(dlt)} points ${dlt>0?"below":"above"} your mornings (${sess.filter(s=>hr(s)>=14).length} afternoon sessions across your diary).${dlt>0?" Heat, fatigue, or lunch — your data doesn't say which, but the pattern is real.":""}`});
+    }
+    // 2. late-session fade
+    const early=sess.filter(s=>s.idx<=2&&s.cons!=null).map(s=>s.cons);
+    const late=sess.filter(s=>s.idx>=4&&s.cons!=null).map(s=>s.cons);
+    if(early.length>=4&&late.length>=3){
+      const dlt=Math.round(avg(early)-avg(late));
+      if(dlt>=4)out.push({icon:"🔋",t:`From session 4 onwards your consistency drops ${dlt} points on average. The fastest thing you can do late in a day may be a longer break — or ending on session 3's high.`});
+      else if(dlt<=-3)out.push({icon:"🔋",t:`You get steadier as the day goes on (+${-dlt} consistency from session 4). Slow warm-up, strong finisher.`});
+    }
+    // 3. confidence <-> pace gap to day best
+    const lo=sess.filter(s=>s.conf!=null&&s.conf<=5&&s.best&&s.dayBest).map(s=>(s.best-s.dayBest)/1000);
+    const hi=sess.filter(s=>s.conf!=null&&s.conf>=7&&s.best&&s.dayBest).map(s=>(s.best-s.dayBest)/1000);
+    if(lo.length>=3&&hi.length>=3){
+      const dlt=avg(lo)-avg(hi);
+      if(dlt>=0.7)out.push({icon:"🧠",t:`Sessions you rated confidence ≤5 sit ${dlt.toFixed(1)} s further from your day best than sessions rated ≥7. Correlation, not causation — but in your diary, trust and pace travel together.`});
+    }
+    // 4. physical fatigue signal
+    const fatHi=sess.filter(s=>s.fat!=null&&s.fat>=6&&s.cons!=null).map(s=>s.cons);
+    const fatLo=sess.filter(s=>s.fat!=null&&s.fat<=4&&s.cons!=null).map(s=>s.cons);
+    if(fatHi.length>=3&&fatLo.length>=3){
+      const dlt=Math.round(avg(fatLo)-avg(fatHi));
+      if(dlt>=4)out.push({icon:"💪",t:`When you rate physical fatigue 6+, consistency is ${dlt} points lower. Arm pump and grip strength are trainable between track days.`});
+    }
+    // 5. first-session warm-up
+    const warm=sess.filter(s=>s.idx===1&&s.best&&s.dayBest&&s.best>s.dayBest).map(s=>(s.best-s.dayBest)/1000);
+    if(warm.length>=3){
+      const w=avg(warm);
+      if(w>=1)out.push({icon:"🌅",t:`Your first session runs ${w.toFixed(1)} s off your eventual day best on average. That's your warm-up cost — Track Memory's first-session priorities exist to shrink it.`});
+    }
+  }
+  return{insights:out,days,sessions:sess.length};
 }
 function backupOverdue(){
   if(S.trackdays.length<2)return false;
@@ -1475,7 +1538,7 @@ function viewDayDetail(id){
 
   <details class="adv"><summary>Incidents & issues ${d.incidents&&d.incidents.length?`· ${d.incidents.length}`:""}</summary>
     <div class="card">
-      ${(d.incidents||[]).map((inc,i)=>`<div style="padding:6px 0;border-bottom:1px solid var(--card2)">
+      ${(d.incidents||[]).map((inc,i)=>`<div style="padding:6px 0;border-bottom:1px solid var(--card2)">${inc.corner?`<span class="tag grey">T${inc.corner}</span> `:""}
         <div class="row between"><span class="tag grey">${esc(inc.type)}</span>
         <button class="linkish" data-action="delIncident" data-id="${d.id}" data-i="${i}">Remove</button></div>
         <div class="small" style="margin-top:4px">${esc(inc.text)}</div></div>`).join("")||'<div class="small muted">Nothing logged. This log is private.</div>'}
@@ -1659,6 +1722,9 @@ Actions.addIncident=el=>{
   const id=el.dataset.id;
   openModal(`<h2>Log incident or issue</h2>
     <div class="field"><label>Type</label><div class="chips">${["Crash","Near miss","Mechanical","Warning light","Pain/discomfort","Track condition","Other"].map((t,i)=>`<button class="chip ${i===0?"on":""}" data-action="chipPick" data-group="inc" data-v="${t}">${t}</button>`).join("")}</div></div>
+    ${(()=>{const d=S.trackdays.find(x=>x.id===id);const c=circuitById(d.circuitId),l=layoutOf(c,d.layoutId);const n=clamp((l&&l.corners)||14,1,30);
+      return`<div class="field"><label>Corner (optional — powers the confidence ledger)</label>
+      <select id="f_inc_corner"><option value="">Not corner-related</option>${Array.from({length:n},(_,i)=>`<option value="${i+1}">Turn ${i+1}</option>`).join("")}</select></div>`;})()}
     <div class="field"><label>What happened & what did you learn?</label><textarea id="f_inc"></textarea></div>
     <p class="small muted">Private — never shown in exports unless you include it.</p>
     <button class="btn" data-action="saveIncident" data-id="${id}">Save</button>`);
@@ -1666,7 +1732,9 @@ Actions.addIncident=el=>{
 Actions.saveIncident=el=>{
   const d=S.trackdays.find(x=>x.id===el.dataset.id);
   d.incidents=d.incidents||[];
-  d.incidents.push({type:pickedChip("inc")||"Other",text:$("#f_inc").value.trim()});
+  const inc={type:pickedChip("inc")||"Other",text:$("#f_inc").value.trim(),date:d.date};
+  const cn=$("#f_inc_corner");if(cn&&cn.value)inc.corner=+cn.value;
+  d.incidents.push(inc);
   save();closeModal();render();
 };
 Actions.delIncident=el=>{
@@ -2209,6 +2277,7 @@ function viewTrackDetail(id){
   </div>
 
   ${mem?memoryCardHTML(c.id,layoutId,bikeId):""}
+  ${fearLedgerCard(c.id,layoutId,bikeId)}
 
   <div class="card">
     <div class="cardhead"><h3>Permanent circuit notebook</h3><button class="linkish" data-action="editPermNotes">Edit</button></div>
@@ -2369,19 +2438,29 @@ function cornerJourney(circuitId,layoutId,bikeId,num){
   const ev=[];
   const ca=(S.annotations[annoKey(circuitId,layoutId,bikeId)]||{corners:{}}).corners[num];
   if(ca&&ca.history)for(const h of ca.history)ev.push({d:h.d,type:"status",s:h.s});
+  if(ca&&ca.confHistory)for(const h of ca.confHistory)ev.push({d:h.d,type:"conf",v:h.v});
+  for(const day of S.trackdays){
+    if(day.circuitId!==circuitId||day.layoutId!==layoutId)continue;
+    for(const inc of(day.incidents||[]))if(inc.corner==num)ev.push({d:day.date,type:"incident",t:inc.type,text:inc.text});
+  }
   const prefix=`${circuitId}/${layoutId}/${bikeId}/day/`;
   for(const k of Object.keys(S.annotations)){
     if(!k.startsWith(prefix))continue;
     const dn=S.annotations[k].corners&&S.annotations[k].corners[num]&&S.annotations[k].corners[num].dayNote;
     if(dn)ev.push({d:k.slice(prefix.length),type:"note",text:dn});
   }
-  ev.sort((a,b)=>a.d.localeCompare(b.d)||(a.type==="status"?-1:1));
+  const ord={incident:0,status:1,conf:2,note:3};ev.sort((a,b)=>a.d.localeCompare(b.d)||ord[a.type]-ord[b.type]);
   return ev;
 }
 function journeyHTML(circuitId,layoutId,bikeId,num){
   const ev=[];
   const ca=(S.annotations[annoKey(circuitId,layoutId,bikeId)]||{corners:{}}).corners[num];
   if(ca&&ca.history)for(const h of ca.history)ev.push({d:h.d,type:"status",s:h.s});
+  if(ca&&ca.confHistory)for(const h of ca.confHistory)ev.push({d:h.d,type:"conf",v:h.v});
+  for(const day of S.trackdays){
+    if(day.circuitId!==circuitId||day.layoutId!==layoutId)continue;
+    for(const inc of(day.incidents||[]))if(inc.corner==num)ev.push({d:day.date,type:"incident",t:inc.type,text:inc.text});
+  }
   const prefix=`${circuitId}/${layoutId}/${bikeId}/day/`;
   for(const k of Object.keys(S.annotations)){
     if(!k.startsWith(prefix))continue;
@@ -2389,20 +2468,63 @@ function journeyHTML(circuitId,layoutId,bikeId,num){
     if(dn)ev.push({d:k.slice(prefix.length),type:"note",text:dn,key:k});
   }
   if(!ev.length)return"";
-  ev.sort((a,b)=>a.d.localeCompare(b.d)||(a.type==="status"?-1:1));
+  const ord={incident:0,status:1,conf:2,note:3};ev.sort((a,b)=>a.d.localeCompare(b.d)||ord[a.type]-ord[b.type]);
   const row=e=>{
     if(e.type==="status"){
       const m=STATUS_META[e.s]||STATUS_META.none;
       return`<div class="jrow"><span class="jdot" style="background:${m.hex}"></span>
         <div><b class="small" style="color:${m.hex}">${esc(m.label)}</b><span class="small muted"> · ${fmtDate(e.d)}</span></div></div>`;
     }
-    return`<div class="jrow"><span class="jdot jnote"></span>
+    if(e.type==="note")return`<div class="jrow"><span class="jdot jnote"></span>
       <div style="flex:1"><span class="small">${esc(e.text)}</span><span class="small muted"> · ${fmtDateShort(e.d)}</span>
       <button class="linkish" style="padding:0 0 0 6px" data-action="promoteNote" data-key="${esc(e.key)}" data-corner="${num}">↑ Promote</button></div></div>`;
+    if(e.type==="conf")return`<div class="jrow"><span class="jdot" style="background:var(--card-sub);width:8px;height:8px;left:-19.5px;top:3px"></span>
+      <div><span class="small muted">Confidence → <b class="laptime" style="font-size:.78rem;color:${e.v>=7?"var(--green)":e.v<=4?"var(--red)":"var(--ink)"}">${e.v}</b> · ${fmtDateShort(e.d)}</span></div></div>`;
+    return`<div class="jrow"><span class="jdot" style="background:var(--red)"></span>
+      <div><b class="small" style="color:var(--red)">⚠ ${esc(e.t)}</b><span class="small muted"> · ${fmtDate(e.d)}</span>
+      ${e.text?`<div class="small muted">${esc(e.text)}</div>`:""}</div></div>`;
   };
   return`<div class="field" style="margin-top:14px"><label>Corner journey</label>
     <div class="jline">${ev.map(row).join("")}</div>
     <div class="small muted" style="margin-top:6px">Every status change and track-day observation for this corner, oldest first.</div></div>`;
+}
+
+/* ============================================================
+   FEAR LEDGER — confidence recovery after incidents, per corner
+============================================================ */
+function fearLedger(circuitId,layoutId,bikeId){
+  const anno=S.annotations[annoKey(circuitId,layoutId,bikeId)];
+  const out=[];
+  for(const day of S.trackdays){
+    if(day.circuitId!==circuitId||day.layoutId!==layoutId)continue;
+    for(const inc of(day.incidents||[])){
+      if(!inc.corner)continue;
+      const ca=anno&&anno.corners[inc.corner];
+      const hist=(ca&&ca.confHistory)||[];
+      const before=hist.filter(h=>h.d<day.date).map(h=>h.v).pop()??null;
+      const after=hist.filter(h=>h.d>=day.date).map(h=>h.v).pop()??(ca?ca.confidence:null);
+      out.push({corner:inc.corner,name:ca&&ca.name,type:inc.type,date:day.date,before,after,
+        recovered:before==null||after==null?null:after>=before});
+    }
+  }
+  return out;
+}
+function fearLedgerCard(circuitId,layoutId,bikeId){
+  const led=fearLedger(circuitId,layoutId,bikeId);
+  if(!led.length)return"";
+  const row=e=>{
+    const label=`T${e.corner}${e.name?" · "+esc(e.name):""}`;
+    let verdict="";
+    if(e.recovered===false)verdict=`<div class="small" style="color:var(--amber)">Confidence ${e.before} before → ${e.after} now. Not back yet — that's normal. Rebuild this corner gradually; speed follows trust.</div>`;
+    else if(e.recovered===true)verdict=`<div class="small" style="color:var(--green)">Confidence back to ${e.after} (was ${e.before} before) — recovered. ✓</div>`;
+    else verdict=`<div class="small muted">Track confidence here over your next visits to see the recovery arc.</div>`;
+    return`<div style="padding:7px 0;border-bottom:1px solid var(--card2)">
+      <div class="row between"><b class="small">${label}</b><span class="small muted">${esc(e.type)} · ${fmtDateShort(e.date)}</span></div>
+      ${verdict}</div>`;
+  };
+  return`<div class="card"><div class="eyebrow acc" style="margin-bottom:6px">Confidence ledger</div>
+    <div class="small muted" style="margin-bottom:6px">Incidents leave a mark that lap times don't show. This is yours, privately.</div>
+    ${led.map(row).join("")}</div>`;
 }
 Actions.saveCorner=el=>{
   const num=el.dataset.corner;
@@ -2419,7 +2541,14 @@ Actions.saveCorner=el=>{
     const inp=$("#co_"+k);if(inp)ca[k]=inp.value.trim();
   }
   ca.notes=$("#co_notes").value.trim();
-  ca.confidence=+$("#co_conf").value;
+  const newConf=+$("#co_conf").value;
+  if(newConf!==ca.confidence){
+    ca.confHistory=ca.confHistory||[];
+    const lastC=ca.confHistory[ca.confHistory.length-1];
+    if(!lastC||lastC.d!==todayISO())ca.confHistory.push({d:todayISO(),v:newConf});
+    else lastC.v=newConf;
+  }
+  ca.confidence=newConf;
   const dn=$("#co_daynote").value.trim();
   if(dn){
     const dkey=`${mapCtx.circuitId}/${mapCtx.layoutId}/${mapCtx.bikeId}/day/${todayISO()}`;
@@ -2760,6 +2889,12 @@ function viewProgress(){
     ${chart("ch_best",{series:[{data:bests,color:"#ff521f"},{data:avgs,color:"#8a8f99"}],labels,yFmt:v=>fmtLap(v*1000,true)})}
     <div class="legendrow"><span><i style="background:#ff521f"></i>Best lap</span><span><i style="background:#8a8f99"></i>Average</span></div>
   </div>`:""}
+  ${(()=>{const rp=riderPatterns();
+    if(rp.days<3)return rp.days>=1?`<div class="card"><div class="eyebrow acc" style="margin-bottom:4px">Rider patterns</div><div class="small muted">After ~3 logged track days with session ratings, patterns about you as a rider show up here — time of day, fatigue, confidence vs pace.</div></div>`:"";
+    if(!rp.insights.length)return`<div class="card"><div class="eyebrow acc" style="margin-bottom:4px">Rider patterns</div><div class="small muted">No strong patterns in ${rp.sessions} sessions across ${rp.days} days yet — keep rating confidence and fatigue after sessions; that's the raw material.</div></div>`;
+    return`<div class="card"><div class="eyebrow acc" style="margin-bottom:6px">Rider patterns · you, across ${rp.days} days</div>
+      ${rp.insights.map(i=>`<div class="row" style="gap:10px;padding:7px 0;border-bottom:1px solid var(--card2);align-items:baseline"><span>${i.icon}</span><span class="small" style="line-height:1.5">${i.t}</span></div>`).join("")}
+      <div class="small muted" style="margin-top:7px">Patterns in your own diary — correlations, not diagnoses.</div></div>`;})()}
   <div class="card">
     <div class="cardhead"><h3>Consistency per day</h3><span class="small muted">higher = steadier</span></div>
     ${chart("ch_cons",{type:"bar",series:[{data:cons,color:"#3fae5a"}],labels})}
